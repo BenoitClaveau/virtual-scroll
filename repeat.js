@@ -1,36 +1,67 @@
-<html lang="en" >
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- Angular Material style sheet -->
-  <link rel="stylesheet" href="http://ajax.googleapis.com/ajax/libs/angular_material/1.1.0/angular-material.min.css">
-</head>
+var app = angular.module('App');
 
-<body ng-app="App" ng-cloak ng-controller="Controller as ctrl">
+app.directive('mdRepeat', RepeatDirective);
 
-  <h4>Virtual scrolling {{ctrl.dataset.getLength()}}</h4>
-
-  <main>
-    <md-virtual-list-container style="height: 300px;">
-      <div md-virtual-list="i in ctrl.dataset" md-on-demand>
-        <p>Hello {{i.value}}!</p>
-      </div>
-    </md-virtual-list-container>
-
-
-  </main>
+function RepeatController($scope, $element, $attrs) {
+  this.$scope = $scope;
+  this.$element = $element;
+  this.$attrs = $attrs;
   
-  <!-- Angular Material requires Angular.js Libraries -->
-  <script src="http://ajax.googleapis.com/ajax/libs/angularjs/1.5.5/angular.min.js"></script>
-  <script src="http://ajax.googleapis.com/ajax/libs/angularjs/1.5.5/angular-animate.min.js"></script>
-  <script src="http://ajax.googleapis.com/ajax/libs/angularjs/1.5.5/angular-aria.min.js"></script>
-  <script src="http://ajax.googleapis.com/ajax/libs/angularjs/1.5.5/angular-messages.min.js"></script>
-
-  <!-- Angular Material Library -->
-  <script src="http://ajax.googleapis.com/ajax/libs/angular_material/1.1.0/angular-material.min.js"></script>
+  this.repeatName = null;
+  this.repeatListExpression = null;
   
-  <!-- Your application bootstrap  -->
-  <script src="controller.js"></script>
-  <script src="list.js"></script>
+  this.parentNode = $element[0].parentNode;
+}
 
-</body>
-</html>
+RepeatController.prototype.link = function($transclude, $timeout, repeatName, repeatListExpression) {
+  this.repeatName = repeatName;
+  this.repeatListExpression = repeatListExpression;
+  this.transclude = $transclude;
+
+  this.blocks = [];
+
+  for(var i = 0 ; i < 5; i++) {
+    this.transclude(angular.bind(this, function(clone, scope) {
+      var block = {
+        element: clone,
+        new: true,
+        scope: scope
+      };
+      
+      //TODO bind model
+      scope["i"] = { value: i };
+
+      this.parentNode.appendChild(clone[0]);
+      
+      this.blocks.push(block);
+
+    }));
+  }
+
+  $timeout(angular.bind(this, function() {
+    var index = 0;
+    this.parentNode.removeChild(this.blocks[index].element[0]);
+    delete this.blocks[index];
+  }), 2000);
+};
+
+function RepeatDirective($parse, $timeout) {
+  return {
+    controller: RepeatController,
+    priority: 1000,
+    restrict: 'A',
+    terminal: true,
+    replace: true,
+    transclude: 'element',
+    compile: function RepeatCompile($element, $attrs) {
+      var expression = $attrs.mdRepeat;
+      var match = expression.match(/^\s*([\s\S]+?)\s+in\s+([\s\S]+?)\s*$/);
+      var repeatName = match[1];
+      var repeatListExpression = $parse(match[2]);
+
+      return function Link($scope, $element, $attrs, ctrl, $transclude) {
+          ctrl.link($transclude, $timeout, repeatName, repeatListExpression);
+      }      
+    }
+  };
+}
