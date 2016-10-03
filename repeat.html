@@ -7,14 +7,14 @@
 
 <body ng-app="App" ng-cloak ng-controller="Controller as ctrl">
 
-  <h4>Virtual scrolling {{ctrl.dataset.getLength()}}</h4>
+  <h4>Virtual repeat {{ctrl.dataset.getLength()}}</h4>
 
   <main>
-    <md-virtual-list-container style="height: 300px;">
-      <div md-virtual-list="i in ctrl.dataset" md-on-demand>
+    <section style="height: 300px;">
+      <div md-repeat="i in ctrl.dataset" md-on-demand>
         <p>Hello {{i.value}}!</p>
       </div>
-    </md-virtual-list-container>
+    </section>
 
 
   </main>
@@ -30,7 +30,7 @@
   
   <!-- Your application bootstrap  -->
   <script src="controller.js"></script>
-  <script src="list.js"></script>
+  <script src="repeat.js"></script>
 
 </body>
 </html>
