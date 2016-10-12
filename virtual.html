@@ -1,0 +1,84 @@
+<html lang="en" >
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Angular Material style sheet -->
+  <link rel="stylesheet" href="http://ajax.googleapis.com/ajax/libs/angular_material/1.1.0/angular-material.min.css">
+  <style>
+.md-virtual-list-container {
+  box-sizing: border-box;
+  display: block;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+}
+
+.md-virtual-list-container .md-virtual-list-scroller {
+    bottom: 0;
+    box-sizing: border-box;
+    left: 0;
+    margin: 0;
+    overflow-x: hidden;
+    padding: 0;
+    position: absolute;
+    right: 0;
+    top: 0;
+    -webkit-overflow-scrolling: touch;
+}
+.md-virtual-list-container .md-virtual-list-sizer {
+    box-sizing: border-box;
+    height: 1px;
+    display: block;
+    margin: 0;
+    padding: 0;
+    width: 1px;
+}
+
+.md-virtual-list-container .md-virtual-list-offsetter {
+    box-sizing: border-box;
+    left: 0;
+    margin: 0;
+    padding: 0;
+    position: absolute;
+    right: 0;
+    top: 0;
+}
+.md-virtual-list-container .md-virtual-list {
+  border: 1px solid red;
+}
+
+  </style>
+</head>
+
+<body ng-app="App" ng-cloak ng-controller="Controller as ctrl">
+
+  <h4>Virtual scrolling {{ctrl.dataset.getLength()}}</h4>
+
+  <main>
+    <md-virtual-list-container style="height: 300px; overflow-y: scroll;">
+      <div class="tombstone">
+        <p>Loading....</p>
+      </div>
+      <div md-virtual-list="i in ctrl.dataset">
+        <div class="template">
+          <p>Hello {{i.value}}!</p>
+        </div>
+      </div>
+    </md-virtual-list-container>
+  </main>
+  
+  <!-- Angular Material requires Angular.js Libraries -->
+  <script src="http://ajax.googleapis.com/ajax/libs/angularjs/1.5.5/angular.min.js"></script>
+  <script src="http://ajax.googleapis.com/ajax/libs/angularjs/1.5.5/angular-animate.min.js"></script>
+  <script src="http://ajax.googleapis.com/ajax/libs/angularjs/1.5.5/angular-aria.min.js"></script>
+  <script src="http://ajax.googleapis.com/ajax/libs/angularjs/1.5.5/angular-messages.min.js"></script>
+
+  <!-- Angular Material Library -->
+  <script src="http://ajax.googleapis.com/ajax/libs/angular_material/1.1.0/angular-material.min.js"></script>
+  
+  <!-- Your application bootstrap  -->
+  <script src="controller.js"></script>
+  <script src="virtual.js"></script>
+
+</body>
+</html>
