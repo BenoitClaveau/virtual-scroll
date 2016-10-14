@@ -4,10 +4,9 @@ var SCROLL_RUNWAY = 150;
 var ANIMATION_DURATION_MS = 250;
 
 angular.module('App')
-  .directive('mdVirtualListContainer', VirtualListContainerDirective)
-  .directive('mdVirtualList', VirtualListDirective);
+  .directive('mdVirtualListContainer', VirtualListContainerDirective);
 
-function VirtualListContainerDirective() {
+function VirtualListContainerDirective($parse, $compile, $rootScope) {
   return {
     restrict: 'AE',
     transclude: 'element',
@@ -15,15 +14,21 @@ function VirtualListContainerDirective() {
     template: '<div class="virtual-list-container"></div>',
     controller: VirtualListContainerController,
     compile: function VirtualListContainerCompile($element, $attrs) {
+
+      var expression = $attrs.mdVirtualListContainer;
+      var match = expression.match(/^\s*([\s\S]+?)\s+in\s+([\s\S]+?)\s*$/);
+      var repeatName = match[1];
+      var repeatListExpression = $parse(match[2]);
+
       return function Link($scope, $element, $attrs, ctrl, $transclude) {
-          ctrl.link($transclude, $scope);
+          ctrl.link($transclude, $compile, repeatName, repeatListExpression, $rootScope);
       }    
     }
   };
 }
 
 function VirtualListContainerController($scope, $element, $attrs, $document, $window) {
-  this.virtualListController = null;  
+
   this.$scope = $scope;
   this.scroller_ = $element[0];
 
@@ -53,19 +58,23 @@ function VirtualListContainerController($scope, $element, $attrs, $document, $wi
   //this.onResize_();
 }
 
-VirtualListContainerController.prototype.link = function($transclude) {
+VirtualListContainerController.prototype.link = function($transclude, $compile, repeatName, repeatListExpression, $rootScope) {
+  this.repeatName = repeatName;
+  this.repeatListExpression = repeatListExpression;
   this.transclude = $transclude;
+  this.$compile = $compile;
+  this.$rootScope = $rootScope;
 
   this.transclude(function(clone, scope) {
     var element = clone[0];
 
     this.tombstone = element.querySelector(".tombstone"); //store tombstone, but remove from template
     
-    element.removeChild(this.tombstone);
+    //element.removeChild(this.tombstone);
 
-    this.scroller_.appendChild(element);
+    //this.scroller_.appendChild(element);
 
-    //this.onResize_(); 
+    this.onResize_(); 
 
   }.bind(this));
 }
@@ -151,98 +160,91 @@ VirtualListContainerController.prototype.attachContent = function() {
           continue;
         }
       }
-      var promise = this.items_[i].data ? this.render(this.items_[i].data, unusedNodes.pop()) : this.getTombstone();
-      promises.push(promise.then(function(i, node) {
-          // Maybe don't do this if it's already attached?
-          node.style.position = 'absolute';
-          this.items_[i].top = -1;
-          this.scroller_.appendChild(node);
-          this.items_[i].node = node;
-        }.bind(this, i))
-      );
+      var node = this.items_[i].data ? this.render(this.items_[i].data, unusedNodes.pop()) : this.getTombstone();
+      node.style.position = 'absolute';
+      this.items_[i].top = -1;
+      this.scroller_.appendChild(node);
+      this.items_[i].node = node;
+    }
+    
+    // Remove all unused nodes
+    while (unusedNodes.length) {
+      this.scroller_.removeChild(unusedNodes.pop());
     }
 
-    return Promise.all(promises).then(function() {
-
-      // Remove all unused nodes
-      while (unusedNodes.length) {
-        this.scroller_.removeChild(unusedNodes.pop());
+    // Get the height of all nodes which haven't been measured yet.
+    for (i = this.firstAttachedItem_; i < this.lastAttachedItem_; i++) {
+      // Only cache the height if we have the real contents, not a placeholder.
+      if (this.items_[i].data && !this.items_[i].height) {
+        this.items_[i].height = this.items_[i].node.offsetHeight;
+        this.items_[i].width = this.items_[i].node.offsetWidth;
       }
+    }
 
-      // Get the height of all nodes which haven't been measured yet.
-      for (i = this.firstAttachedItem_; i < this.lastAttachedItem_; i++) {
-        // Only cache the height if we have the real contents, not a placeholder.
-        if (this.items_[i].data && !this.items_[i].height) {
-          this.items_[i].height = this.items_[i].node.offsetHeight;
-          this.items_[i].width = this.items_[i].node.offsetWidth;
+    // Fix scroll position in case we have realized the heights of elements
+    // that we didn't used to know.
+    // TODO: We should only need to do this when a height of an item becomes
+    // known above.
+    this.anchorScrollTop = 0;
+    for (i = 0; i < this.anchorItem.index; i++) {
+      this.anchorScrollTop += this.items_[i].height || this.tombstoneSize_;
+    }
+    this.anchorScrollTop += this.anchorItem.offset;
+
+    // Position all nodes.
+    var curPos = this.anchorScrollTop - this.anchorItem.offset;
+    i = this.anchorItem.index;
+    while (i > this.firstAttachedItem_) {
+      curPos -= this.items_[i - 1].height || this.tombstoneSize_;
+      i--;
+    }
+    while (i < this.firstAttachedItem_) {
+      curPos += this.items_[i].height || this.tombstoneSize_;
+      i++;
+    }
+    // Set up initial positions for animations.
+    for (var i in tombstoneAnimations) {
+      var anim = tombstoneAnimations[i];
+      this.items_[i].node.style.transform = 'translateY(' + (this.anchorScrollTop + anim[1]) + 'px) scale(' + (this.tombstoneWidth_ / this.items_[i].width) + ', ' + (this.tombstoneSize_ / this.items_[i].height) + ')';
+      // Call offsetTop on the nodes to be animated to force them to apply current transforms.
+      this.items_[i].node.offsetTop;
+      anim[0].offsetTop;
+      this.items_[i].node.style.transition = 'transform ' + ANIMATION_DURATION_MS + 'ms';
+    }
+    for (i = this.firstAttachedItem_; i < this.lastAttachedItem_; i++) {
+      var anim = tombstoneAnimations[i];
+      if (anim) {
+        anim[0].style.transition = 'transform ' + ANIMATION_DURATION_MS + 'ms, opacity ' + ANIMATION_DURATION_MS + 'ms';
+        anim[0].style.transform = 'translateY(' + curPos + 'px) scale(' + (this.items_[i].width / this.tombstoneWidth_) + ', ' + (this.items_[i].height / this.tombstoneSize_) + ')';
+        anim[0].style.opacity = 0;
+      }
+      if (curPos != this.items_[i].top) {
+        if (!anim)
+          this.items_[i].node.style.transition = '';
+        this.items_[i].node.style.transform = 'translateY(' + curPos + 'px)';
+      }
+      this.items_[i].top = curPos;
+      curPos += this.items_[i].height || this.tombstoneSize_;
+    }
+
+    this.scrollRunwayEnd_ = Math.max(this.scrollRunwayEnd_, curPos + SCROLL_RUNWAY)
+    this.scrollRunway_.style.transform = 'translate(0, ' + this.scrollRunwayEnd_ + 'px)';
+    this.scroller_.scrollTop = this.anchorScrollTop;
+
+    if (ANIMATION_DURATION_MS) {
+      // TODO: Should probably use transition end, but there are a lot of animations we could be listening to.
+      setTimeout(function() {
+        for (var i in tombstoneAnimations) {
+          var anim = tombstoneAnimations[i];
+          anim[0].classList.add('invisible');
+          this.tombstones_.push(anim[0]);
+          // Tombstone can be recycled now.
         }
-      }
+      }.bind(this), ANIMATION_DURATION_MS)
+    }
 
-      // Fix scroll position in case we have realized the heights of elements
-      // that we didn't used to know.
-      // TODO: We should only need to do this when a height of an item becomes
-      // known above.
-      this.anchorScrollTop = 0;
-      for (i = 0; i < this.anchorItem.index; i++) {
-        this.anchorScrollTop += this.items_[i].height || this.tombstoneSize_;
-      }
-      this.anchorScrollTop += this.anchorItem.offset;
-
-      // Position all nodes.
-      var curPos = this.anchorScrollTop - this.anchorItem.offset;
-      i = this.anchorItem.index;
-      while (i > this.firstAttachedItem_) {
-        curPos -= this.items_[i - 1].height || this.tombstoneSize_;
-        i--;
-      }
-      while (i < this.firstAttachedItem_) {
-        curPos += this.items_[i].height || this.tombstoneSize_;
-        i++;
-      }
-      // Set up initial positions for animations.
-      for (var i in tombstoneAnimations) {
-        var anim = tombstoneAnimations[i];
-        this.items_[i].node.style.transform = 'translateY(' + (this.anchorScrollTop + anim[1]) + 'px) scale(' + (this.tombstoneWidth_ / this.items_[i].width) + ', ' + (this.tombstoneSize_ / this.items_[i].height) + ')';
-        // Call offsetTop on the nodes to be animated to force them to apply current transforms.
-        this.items_[i].node.offsetTop;
-        anim[0].offsetTop;
-        this.items_[i].node.style.transition = 'transform ' + ANIMATION_DURATION_MS + 'ms';
-      }
-      for (i = this.firstAttachedItem_; i < this.lastAttachedItem_; i++) {
-        var anim = tombstoneAnimations[i];
-        if (anim) {
-          anim[0].style.transition = 'transform ' + ANIMATION_DURATION_MS + 'ms, opacity ' + ANIMATION_DURATION_MS + 'ms';
-          anim[0].style.transform = 'translateY(' + curPos + 'px) scale(' + (this.items_[i].width / this.tombstoneWidth_) + ', ' + (this.items_[i].height / this.tombstoneSize_) + ')';
-          anim[0].style.opacity = 0;
-        }
-        if (curPos != this.items_[i].top) {
-          if (!anim)
-            this.items_[i].node.style.transition = '';
-          this.items_[i].node.style.transform = 'translateY(' + curPos + 'px)';
-        }
-        this.items_[i].top = curPos;
-        curPos += this.items_[i].height || this.tombstoneSize_;
-      }
-
-      this.scrollRunwayEnd_ = Math.max(this.scrollRunwayEnd_, curPos + SCROLL_RUNWAY)
-      this.scrollRunway_.style.transform = 'translate(0, ' + this.scrollRunwayEnd_ + 'px)';
-      this.scroller_.scrollTop = this.anchorScrollTop;
-
-      if (ANIMATION_DURATION_MS) {
-        // TODO: Should probably use transition end, but there are a lot of animations we could be listening to.
-        setTimeout(function() {
-          for (var i in tombstoneAnimations) {
-            var anim = tombstoneAnimations[i];
-            anim[0].classList.add('invisible');
-            this.tombstones_.push(anim[0]);
-            // Tombstone can be recycled now.
-          }
-        }.bind(this), ANIMATION_DURATION_MS)
-      }
-
-      this.maybeRequestContent();
-    }.bind(this));
-  },
+    this.maybeRequestContent();
+  }
 
 
 /*--------------*/
@@ -278,7 +280,6 @@ VirtualListContainerController.prototype.calculateAnchoredItem = function(initia
 }
 
 VirtualListContainerController.prototype.maybeRequestContent = function() {
-  if (!this.virtualListController) return;
   if (this.requestInProgress_)
       return;
   var itemsNeeded = this.lastAttachedItem_ - this.loadedItems_;
@@ -299,10 +300,6 @@ VirtualListContainerController.prototype.maybeRequestContent = function() {
   }.bind(this)).then(this.addContent.bind(this));
 }
 
-VirtualListContainerController.prototype.register = function(virtualListController) {
-  this.virtualListController = virtualListController;
-}
-
 VirtualListContainerController.prototype.addContent = function(items) {
   for (var i = 0; i < items.length; i++) {
     if (this.items_.length <= this.loadedItems_)
@@ -313,26 +310,27 @@ VirtualListContainerController.prototype.addContent = function(items) {
 }
 
 VirtualListContainerController.prototype.render = function(data, div) {
-  return new Promise(function(resolve, reject) {
-    // this.virtualListController.transclude(function(clone, scope) {
-    //     scope["i"] = data;
-    //     resolve(clone[0].children[0]);
-    // });
-  }.bind(this));
+
+  var scope = this.$rootScope.$new(true);
+  var model = { value: "Yes" };
+  angular.extend(scope, model);
+  var template = "<h1>val: {{value}}</h1>";
+  var compiled = this.$compile(template)(scope);
+  scope.$apply();
+  return compiled[0];
 }
 
 VirtualListContainerController.prototype.getTombstone = function() {
-  return new Promise(function(resolve, reject) {
-    var tombstone = this.tombstones_.pop();
-    if (tombstone) {
-      tombstone.classList.remove('invisible');
-      tombstone.style.opacity = 1;
-      tombstone.style.transform = '';
-      tombstone.style.transition = '';
-      resolve(tombstone);
-    }
-    resolve(this.tombstone.cloneNode(true));
-  }.bind(this));
+  var tombstone = this.tombstones_.pop();
+  if (tombstone) {
+    tombstone.classList.remove('invisible');
+    tombstone.style.opacity = 1;
+    tombstone.style.transform = '';
+    tombstone.style.transition = '';
+
+    tombstone;
+  }
+  return this.tombstone.cloneNode(true);
 }
 
 VirtualListContainerController.prototype.addItem_ = function() {
@@ -343,58 +341,4 @@ VirtualListContainerController.prototype.addItem_ = function() {
     'width': 0,
     'top': 0,
   })
-}
-
-/*--------------*/
-
-function VirtualListDirective($parse, $compile) {
-  return {
-    controller: VirtualListController,
-    priority: 1000,
-    require: ['mdVirtualList', '^^mdVirtualListContainer'],
-    restrict: 'A',
-    terminal: true,
-    replace: true,
-    transclude: 'element',
-    compile: function VirtualListCompile($element, $attrs) {
-      $element.addClass('md-virtual-list');
-
-      var expression = $attrs.mdVirtualList;
-      var match = expression.match(/^\s*([\s\S]+?)\s+in\s+([\s\S]+?)\s*$/);
-      var repeatName = match[1];
-      var repeatListExpression = $parse(match[2]);
-
-      return function Link($scope, $element, $attrs, ctrl, $transclude) {
-          ctrl[0].link(ctrl[1], $transclude, $compile, repeatName, repeatListExpression);
-      }      
-    }
-  };
-}
-
-function VirtualListController($scope, $element, $attrs) {
-  this.$scope = $scope;
-  this.$element = $element;
-  this.$attrs = $attrs;
-  
-  this.repeatName = null;
-  this.repeatListExpression = null;
-  
-  this.parentNode = $element[0].parentNode;
-}
-
-VirtualListController.prototype.link = function(container, $transclude, $compile, repeatName, repeatListExpression) {
-  this.container = container;
-  this.repeatName = repeatName;
-  this.repeatListExpression = repeatListExpression;
-  this.transclude = $transclude;
-  this.$compile = $compile;
-  this.container.register(this);
-  this.container.onResize_(); 
-
-  this.transclude(function(clone, scope) {
-    var element = clone[0].children[0];
-
-    this.$element[0].appendChild(element);
-
-  }.bind(this));
 }
