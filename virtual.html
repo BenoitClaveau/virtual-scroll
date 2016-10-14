@@ -55,16 +55,14 @@
   <h4>Virtual scrolling {{ctrl.dataset.getLength()}}</h4>
 
   <main>
-    <md-virtual-list-container style="height: 300px; overflow-y: scroll;">
+    <div md-virtual-list-container="i in ctrl.dataset" style="height: 300px; overflow-y: scroll;">
       <div class="tombstone">
         <p>Loading....</p>
       </div>
-      <div md-virtual-list="i in ctrl.dataset">
-        <div class="template">
-          <p>Hello {{i.value}}!</p>
-        </div>
+      <div class="template">
+        <p>Hello {{i.value}}!</p>
       </div>
-    </md-virtual-list-container>
+    </div>
   </main>
   
   <!-- Angular Material requires Angular.js Libraries -->
