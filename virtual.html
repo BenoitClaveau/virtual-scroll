@@ -4,47 +4,42 @@
   <!-- Angular Material style sheet -->
   <link rel="stylesheet" href="http://ajax.googleapis.com/ajax/libs/angular_material/1.1.0/angular-material.min.css">
   <style>
+body {
+  /*overflow-y: hidden;*/
+}
+
 .md-virtual-list-container {
-  box-sizing: border-box;
-  display: block;
   margin: 0;
-  overflow: hidden;
   padding: 0;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+  height: 100%;
+  /*position: absolute;*/
+  box-sizing: border-box;
+  contain: layout;
+  will-change: transform;
+
   position: relative;
+
+  /*height: calc(100% - 36px);*/
 }
 
-.md-virtual-list-container .md-virtual-list-scroller {
-    bottom: 0;
-    box-sizing: border-box;
-    left: 0;
-    margin: 0;
-    overflow-x: hidden;
-    padding: 0;
-    position: absolute;
-    right: 0;
-    top: 0;
-    -webkit-overflow-scrolling: touch;
-}
-.md-virtual-list-container .md-virtual-list-sizer {
-    box-sizing: border-box;
-    height: 1px;
-    display: block;
-    margin: 0;
-    padding: 0;
-    width: 1px;
+.md-virtual-list-container > * {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  contain: layout;
+  will-change: transform;
 }
 
-.md-virtual-list-container .md-virtual-list-offsetter {
-    box-sizing: border-box;
-    left: 0;
-    margin: 0;
-    padding: 0;
-    position: absolute;
-    right: 0;
-    top: 0;
+.md-virtual-list-container .tombstone {
+  background-color: #ccc;
 }
-.md-virtual-list-container .md-virtual-list {
-  border: 1px solid red;
+
+.invisible {
+  display: none;
 }
 
   </style>
@@ -55,12 +50,15 @@
   <h4>Virtual scrolling {{ctrl.dataset.getLength()}}</h4>
 
   <main>
-    <div md-virtual-list-container="i in ctrl.dataset" style="height: 300px; overflow-y: scroll;">
+    <div md-virtual-list-container="i in ctrl.dataset">
+    <!--<div md-virtual-list-container="i in ctrl.dataset" style="height: 400px; overflow-y: scroll;">-->
       <div class="tombstone">
         <p>Loading....</p>
       </div>
       <div class="template">
-        <p>Hello {{i.value}}!</p>
+        <div>--------</div>
+        <h2>Hello {{i.value}}!</h2>
+        <div style="height: {{i.h}}px; border: 1px solid red;">height: {{i.h}}</div>
       </div>
     </div>
   </main>
