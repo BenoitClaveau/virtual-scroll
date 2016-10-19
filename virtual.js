@@ -1,12 +1,12 @@
-var RUNWAY_ITEMS = 20;
-var RUNWAY_ITEMS_OPPOSITE = 10;
-var SCROLL_RUNWAY = 150;
-var ANIMATION_DURATION_MS = 250;
+var RUNWAyITEMS = 2;
+var RUNWAyITEMsOPPOSITE = 2;
+var SCROLlRUNWAY = 200;
+var ANIMATIOnDURATIOnMS = 250;
 
 angular.module('App')
   .directive('mdVirtualListContainer', VirtualListContainerDirective);
 
-function VirtualListContainerDirective($parse, $compile, $rootScope) {
+function VirtualListContainerDirective($parse, $compile, $rootScope, $window) {
   return {
     restrict: 'AE',
     transclude: 'element',
@@ -14,6 +14,7 @@ function VirtualListContainerDirective($parse, $compile, $rootScope) {
     template: '<div class="virtual-list-container"></div>',
     controller: VirtualListContainerController,
     compile: function VirtualListContainerCompile($element, $attrs) {
+      $element.addClass("md-virtual-list-container");
 
       var expression = $attrs.mdVirtualListContainer;
       var match = expression.match(/^\s*([\s\S]+?)\s+in\s+([\s\S]+?)\s*$/);
@@ -27,40 +28,62 @@ function VirtualListContainerDirective($parse, $compile, $rootScope) {
   };
 }
 
-function VirtualListContainerController($scope, $element, $attrs, $document, $window) {
+function VirtualListContainerController($scope, $element, $attrs, $document, $window, $$rAF, $mdUtil) {
 
   this.$scope = $scope;
-  this.scroller_ = $element[0];
+  this.scroller = $element[0];
 
   this.anchorItem = { index: 0, offset: 0 };
-  this.firstAttachedItem_ = 0;
-  this.lastAttachedItem_ = 0;
+  this.firstAttachedItem = 0;
+  this.lastAttachedItem = 0;
   this.anchorScrollTop = 0;
-  this.tombstoneSize_ = 54;
-  this.tombstones_ = [];
-  this.items_ = [];
-  this.loadedItems_ = 0;
-  
-  this.scroller_.addEventListener('scroll', this.onScroll_.bind(this));
-  $window.addEventListener('resize', this.onResize_.bind(this));
+  this.tombstoneSize = 0;
+  this.tombstones = [];
+  this.unused = [];
+  this.items = [];
+  this.loadedItems = 0;
+  this.requestInProgress = false;
 
-  this.scrollRunway_ = $document[0].createElement('div');
-  // Internet explorer seems to require some text in this div in order to
-  // ensure that it can be scrolled to.
-  this.scrollRunway_.textContent = ' ';
-  this.scrollRunwayEnd_ = 0;
-  this.scrollRunway_.style.position = 'absolute';
-  this.scrollRunway_.style.height = '1px';
-  this.scrollRunway_.style.width = '1px';
-  this.scrollRunway_.style.transition = 'transform 0.2s';
+  this.tombstone = null;
+  this.templateStr = null;
 
-  this.scroller_.appendChild(this.scrollRunway_);
-  //this.onResize_();
+  this.scrollRunway = $document[0].createElement('div');
+  this.scrollRunway.textContent = ' ';
+  this.scrollRunwayEnd = 0;
+  this.scrollRunway.style.position = 'absolute';
+  this.scrollRunway.style.height = '1px';
+  this.scrollRunway.style.width = '1px';
+  this.scrollRunway.style.transition = 'transform 0.2s';
+
+  this.scroller.appendChild(this.scrollRunway);
+
+  this.$$rAF = $$rAF;
+  this.$mdUtil = $mdUtil;
+
+  var jWindow = angular.element($window);
+  var jScroller = angular.element(this.scroller);
+
+  var boundOnScroll = this.onScroll.bind(this);
+  var boundOnResize = this.onResize.bind(this);
+  var boundOnKeyDown = this.onKeyDown.bind(this);
+
+  var debouncedOnResize = $mdUtil.debounce(boundOnResize, 10, null, false);
+  var debouncedOnScroll = $mdUtil.debounce(boundOnScroll, 10, null, false);
+
+  jWindow.on('resize', debouncedOnResize);
+  jWindow.on('keydown', boundOnKeyDown);
+  jScroller.on('scroll', debouncedOnScroll);
+
+  $scope.$on('$destroy', function() {
+    jWindow.off('resize', debouncedOnResize);
+    jWindow.off('keydown', boundOnKeyDown);
+    jScroller.off('scroll', debouncedOnScroll);
+  });
 }
 
 VirtualListContainerController.prototype.link = function($transclude, $compile, repeatName, repeatListExpression, $rootScope) {
   this.repeatName = repeatName;
-  this.repeatListExpression = repeatListExpression;
+  this.rawRepeatListExpression = repeatListExpression;
   this.transclude = $transclude;
   this.$compile = $compile;
   this.$rootScope = $rootScope;
@@ -69,13 +92,14 @@ VirtualListContainerController.prototype.link = function($transclude, $compile, 
     var element = clone[0];
 
     this.tombstone = element.querySelector(".tombstone"); //store tombstone, but remove from template
+    if (!this.tombstone) throw new Error(".tombstone must be defined.");
     
-    //element.removeChild(this.tombstone);
+    this.templateStr = element.querySelector(".template").outerHTML.trim(); //store tombstone, but remove from template
+    if (!this.templateStr) throw new Error(".template must be defined.");
 
-    //this.scroller_.appendChild(element);
-
-    this.onResize_(); 
-
+    this.$mdUtil.nextTick(function() {
+      this.onResize();
+    }.bind(this));
   }.bind(this));
 }
 
@@ -84,32 +108,61 @@ VirtualListContainerController.prototype.link = function($transclude, $compile, 
 // document.body.appendChild(elm[0]);
 // $scope.$digest();
 
-VirtualListContainerController.prototype.onResize_ = function() {
-    for (var i = 0; i < this.items_.length; i++) {
-      this.items_[i].height = this.items_[i].width = 0;
+VirtualListContainerController.prototype.onResize = function() {
+
+    this.scroller.style.height = window.innerHeight - 40 + "px";
+
+    var tombstone = this.tombstone.cloneNode(true);
+    tombstone.style.position = 'absolute';
+    this.scroller.appendChild(tombstone);
+    tombstone.classList.remove('invisible');
+    this.tombstoneSize = tombstone.offsetHeight;
+    this.scroller.removeChild(tombstone);
+
+    for (var i = 0; i < this.items.length; i++) {
+      this.items[i].height = this.items[i].width = 0;
     }
 
-    this.onScroll_();
+    this.onScroll();
 }
 
-VirtualListContainerController.prototype.onScroll_ = function() {
-    var delta = this.scroller_.scrollTop - this.anchorScrollTop;
-    if (this.scroller_.scrollTop == 0) {
+VirtualListContainerController.prototype.onKeyDown = function(event) {
+  if (event.keyCode == 16 || event.keyCode == 17) { 
+
+      var offset = this.scroller.offsetHeight * 0.75;
+      if (event.keyCode == 17 ) offset * -1;
+
+      this.scroller.scrollTop = this.scroller.scrollTop + offset;
+
+      this.onScroll();
+      event.preventDefault();
+      event.stopPropagation();
+    }
+}
+
+VirtualListContainerController.prototype.onScroll = function() {
+    var delta = this.scroller.scrollTop - this.anchorScrollTop;
+
+    //console.log("delta", delta, this.scroller.scrollTop, this.anchorScrollTop)
+
+    if (this.scroller.scrollTop == 0) {
       this.anchorItem = { index: 0, offset: 0 };
     } else {
       this.anchorItem = this.calculateAnchoredItem(this.anchorItem, delta);
     }
-    this.anchorScrollTop = this.scroller_.scrollTop;
-    var lastScreenItem = this.calculateAnchoredItem(this.anchorItem, this.scroller_.offsetHeight);
-    if (delta < 0)
-      this.fill(this.anchorItem.index - RUNWAY_ITEMS, lastScreenItem.index + RUNWAY_ITEMS_OPPOSITE);
-    else
-      this.fill(this.anchorItem.index - RUNWAY_ITEMS_OPPOSITE, lastScreenItem.index + RUNWAY_ITEMS);
+    this.anchorScrollTop = this.scroller.scrollTop;
+    var lastScreenItem = this.calculateAnchoredItem(this.anchorItem, this.scroller.offsetHeight);
+    if (delta < 0) {
+      this.fill(this.anchorItem.index - RUNWAyITEMS, lastScreenItem.index + RUNWAyITEMsOPPOSITE);
+    }
+    else {
+      this.fill(this.anchorItem.index - RUNWAyITEMsOPPOSITE, lastScreenItem.index + RUNWAyITEMS);
+    }
 }
 
 VirtualListContainerController.prototype.fill = function(start, end) {
-  this.firstAttachedItem_ = Math.max(0, start);
-  this.lastAttachedItem_ = end;
+  this.firstAttachedItem = Math.max(start, 0);
+  this.lastAttachedItem = end;
   this.attachContent();
 }
 
@@ -117,67 +170,79 @@ VirtualListContainerController.prototype.attachContent = function() {
     // Collect nodes which will no longer be rendered for reuse.
     // TODO: Limit this based on the change in visible items rather than looping
     // over all items.
+    console.log("----------", this.scroller.children.length)
+    console.log("items.length", this.items.length, "firstAttachedItem", this.firstAttachedItem, "lastAttachedItem", this.lastAttachedItem)
+    
     var i;
-    var unusedNodes = [];
-    for (i = 0; i < this.items_.length; i++) {
-      // Skip the items which should be visible.
-      if (i == this.firstAttachedItem_) {
-        i = this.lastAttachedItem_ - 1;
+    for (i = 0; i < this.items.length; i++) {
+      //Skip the items which should be visible.
+      if (i == this.firstAttachedItem) {
+        i = this.lastAttachedItem - 1;
         continue;
       }
-      if (this.items_[i].node) {
-        if (this.items_[i].node.classList.contains('tombstone')) {
-          this.tombstones_.push(this.items_[i].node);
-          this.tombstones_[this.tombstones_.length - 1].classList.add('invisible');
+      if (this.items[i].node) {
+        if (this.items[i].node.classList.contains('tombstone')) {
+          this.tombstones.push(this.items[i].node);
+          this.tombstones[this.tombstones.length - 1].classList.add('invisible');
         } else {
-          unusedNodes.push(this.items_[i].node);
+          this.unused.push(this.items[i].node);
+          //this.scroller.removeChild(this.items[i].node);
         }
       }
-      this.items_[i].node = null;
+      this.items[i].node = null;
     }
+
+    //if (this.unused.length) console.log("unused", this.unused.length);
 
     var tombstoneAnimations = {};
     // Create DOM nodes.
 
     var promises = [];
 
-    for (i = this.firstAttachedItem_; i < this.lastAttachedItem_; i++) {
-      while (this.items_.length <= i)
-        this.addItem_();
-      if (this.items_[i].node) {
+    for (i = this.firstAttachedItem; i < this.lastAttachedItem; i++) {
+      while (this.items.length <= i)
+        this.addItem();
+
+      if (this.items[i].node) {
         // if it's a tombstone but we have data, replace it.
-        if (this.items_[i].node.classList.contains('tombstone') && this.items_[i].data) {
+        if (this.items[i].node.classList.contains('tombstone') && this.items[i].data) {
           // TODO: Probably best to move items on top of tombstones and fade them in instead.
-          if (ANIMATION_DURATION_MS) {
-            this.items_[i].node.style.zIndex = 1;
-            tombstoneAnimations[i] = [this.items_[i].node, this.items_[i].top - this.anchorScrollTop];
+          if (ANIMATIOnDURATIOnMS) {
+            this.items[i].node.style.zIndex = 1;
+            tombstoneAnimations[i] = [this.items[i].node, this.items[i].top - this.anchorScrollTop];
           } else {
-            this.items_[i].node.classList.add('invisible');
-            this.tombstones_.push(this.items_[i].node);
+            this.items[i].node.classList.add('invisible');
+            this.tombstones.push(this.items[i].node);
           }
-          this.items_[i].node = null;
+          this.items[i].node = null;
         } else {
-          continue;
+          continue; //node already exists
         }
       }
-      var node = this.items_[i].data ? this.render(this.items_[i].data, unusedNodes.pop()) : this.getTombstone();
+
+      var node = this.items[i].data ? this.render(this.items[i].data, i) : this.getTombstone();
       node.style.position = 'absolute';
-      this.items_[i].top = -1;
-      this.scroller_.appendChild(node);
-      this.items_[i].node = node;
+      this.items[i].top = -1;
+      this.scroller.appendChild(node);
+      this.items[i].node = node;
+      console.log("append node", i)
+      
     }
     
     // Remove all unused nodes
-    while (unusedNodes.length) {
-      this.scroller_.removeChild(unusedNodes.pop());
+    while (this.unused.length) {
+      this.scroller.removeChild(this.unused.pop());
     }
 
     // Get the height of all nodes which haven't been measured yet.
-    for (i = this.firstAttachedItem_; i < this.lastAttachedItem_; i++) {
+    for (i = this.firstAttachedItem; i < this.lastAttachedItem; i++) {
       // Only cache the height if we have the real contents, not a placeholder.
-      if (this.items_[i].data && !this.items_[i].height) {
-        this.items_[i].height = this.items_[i].node.offsetHeight;
-        this.items_[i].width = this.items_[i].node.offsetWidth;
+      if (this.items[i].data && !this.items[i].height) {
+        this.items[i].height = this.items[i].node.offsetHeight;
+        this.items[i].width = this.items[i].node.offsetWidth;
+        
+        //BC
+        if (!this.items[i].height) this.redraw();
       }
     }
 
@@ -187,60 +252,62 @@ VirtualListContainerController.prototype.attachContent = function() {
     // known above.
     this.anchorScrollTop = 0;
     for (i = 0; i < this.anchorItem.index; i++) {
-      this.anchorScrollTop += this.items_[i].height || this.tombstoneSize_;
+      this.anchorScrollTop += this.items[i].height || this.tombstoneSize;
     }
     this.anchorScrollTop += this.anchorItem.offset;
 
     // Position all nodes.
     var curPos = this.anchorScrollTop - this.anchorItem.offset;
     i = this.anchorItem.index;
-    while (i > this.firstAttachedItem_) {
-      curPos -= this.items_[i - 1].height || this.tombstoneSize_;
+    while (i > this.firstAttachedItem) {
+      curPos -= this.items[i - 1].height || this.tombstoneSize;
       i--;
     }
-    while (i < this.firstAttachedItem_) {
-      curPos += this.items_[i].height || this.tombstoneSize_;
+    while (i < this.firstAttachedItem) {
+      curPos += this.items[i].height || this.tombstoneSize;
       i++;
     }
     // Set up initial positions for animations.
     for (var i in tombstoneAnimations) {
       var anim = tombstoneAnimations[i];
-      this.items_[i].node.style.transform = 'translateY(' + (this.anchorScrollTop + anim[1]) + 'px) scale(' + (this.tombstoneWidth_ / this.items_[i].width) + ', ' + (this.tombstoneSize_ / this.items_[i].height) + ')';
+      this.items[i].node.style.transform = 'translateY(' + (this.anchorScrollTop + anim[1]) + 'px) scale(' + (this.tombstoneWidth_ / this.items[i].width) + ', ' + (this.tombstoneSize / this.items[i].height) + ')';
       // Call offsetTop on the nodes to be animated to force them to apply current transforms.
-      this.items_[i].node.offsetTop;
+      this.items[i].node.offsetTop;
       anim[0].offsetTop;
-      this.items_[i].node.style.transition = 'transform ' + ANIMATION_DURATION_MS + 'ms';
+      this.items[i].node.style.transition = 'transform ' + ANIMATIOnDURATIOnMS + 'ms';
     }
-    for (i = this.firstAttachedItem_; i < this.lastAttachedItem_; i++) {
+    for (i = this.firstAttachedItem; i < this.lastAttachedItem; i++) {
       var anim = tombstoneAnimations[i];
       if (anim) {
-        anim[0].style.transition = 'transform ' + ANIMATION_DURATION_MS + 'ms, opacity ' + ANIMATION_DURATION_MS + 'ms';
-        anim[0].style.transform = 'translateY(' + curPos + 'px) scale(' + (this.items_[i].width / this.tombstoneWidth_) + ', ' + (this.items_[i].height / this.tombstoneSize_) + ')';
+        anim[0].style.transition = 'transform ' + ANIMATIOnDURATIOnMS + 'ms, opacity ' + ANIMATIOnDURATIOnMS + 'ms';
+        anim[0].style.transform = 'translateY(' + curPos + 'px) scale(' + (this.items[i].width / this.tombstoneWidth_) + ', ' + (this.items[i].height / this.tombstoneSize) + ')';
         anim[0].style.opacity = 0;
       }
-      if (curPos != this.items_[i].top) {
+      if (curPos != this.items[i].top) {
         if (!anim)
-          this.items_[i].node.style.transition = '';
-        this.items_[i].node.style.transform = 'translateY(' + curPos + 'px)';
+          this.items[i].node.style.transition = '';
+        this.items[i].node.style.transform = 'translateY(' + curPos + 'px)';
       }
-      this.items_[i].top = curPos;
-      curPos += this.items_[i].height || this.tombstoneSize_;
+      this.items[i].top = curPos;
+      curPos += this.items[i].height || this.tombstoneSize;
     }
 
-    this.scrollRunwayEnd_ = Math.max(this.scrollRunwayEnd_, curPos + SCROLL_RUNWAY)
-    this.scrollRunway_.style.transform = 'translate(0, ' + this.scrollRunwayEnd_ + 'px)';
-    this.scroller_.scrollTop = this.anchorScrollTop;
+    this.scrollRunwayEnd = Math.max(this.scrollRunwayEnd, curPos + SCROLlRUNWAY)
+    this.scrollRunway.style.transform = 'translate(0, ' + this.scrollRunwayEnd + 'px)';
+    this.scroller.scrollTop = this.anchorScrollTop;
 
-    if (ANIMATION_DURATION_MS) {
+    console.log("this.scrollRunwayEnd", this.scrollRunwayEnd);
+
+    if (ANIMATIOnDURATIOnMS) {
       // TODO: Should probably use transition end, but there are a lot of animations we could be listening to.
       setTimeout(function() {
         for (var i in tombstoneAnimations) {
           var anim = tombstoneAnimations[i];
           anim[0].classList.add('invisible');
-          this.tombstones_.push(anim[0]);
+          this.tombstones.push(anim[0]);
           // Tombstone can be recycled now.
         }
-      }.bind(this), ANIMATION_DURATION_MS)
+      }.bind(this), ANIMATIOnDURATIOnMS)
     }
 
     this.maybeRequestContent();
@@ -250,95 +317,107 @@ VirtualListContainerController.prototype.attachContent = function() {
 /*--------------*/
 VirtualListContainerController.prototype.calculateAnchoredItem = function(initialAnchor, delta) {
   if (delta == 0) return initialAnchor;
-  if (!this.tombstoneSize_) 
   
   delta += initialAnchor.offset;
   var i = initialAnchor.index;
 
   var tombstones = 0;
   if (delta < 0) {
-    while (delta < 0 && i > 0 && this.items_[i - 1].height) {
-      delta += this.items_[i - 1].height;
+    while (delta < 0 && i > 0 && this.items[i - 1].height) {
+      delta += this.items[i - 1].height;
       i--;
     }
-    tombstones = Math.max(-i, Math.ceil(Math.min(delta, 0) / this.tombstoneSize_));
+    tombstones = Math.max(-i, Math.ceil(Math.min(delta, 0) / this.tombstoneSize));
   } 
   else {
-    while (delta > 0 && i < this.items_.length && this.items_[i].height && this.items_[i].height < delta) {
-      delta -= this.items_[i].height;
+    while (delta > 0 && i < this.items.length && this.items[i].height && this.items[i].height < delta) {
+      delta -= this.items[i].height;
       i++;
     }
-    if (i >= this.items_.length || !this.items_[i].height)
-      tombstones = Math.floor(Math.max(delta, 0) / this.tombstoneSize_);
+    if (i >= this.items.length || !this.items[i].height)
+      tombstones = Math.floor(Math.max(delta, 0) / this.tombstoneSize);
   }
   i += tombstones;
-  delta -= tombstones * this.tombstoneSize_;
+  delta -= tombstones * this.tombstoneSize;
   return {
     index: i,
     offset: delta,
   };
 }
 
-VirtualListContainerController.prototype.maybeRequestContent = function() {
-  if (this.requestInProgress_)
-      return;
-  var itemsNeeded = this.lastAttachedItem_ - this.loadedItems_;
-  if (itemsNeeded <= 0)
-    return;
-  
-  this.requestInProgress_ = true;
-
- 
-  Promise.resolve().then(function() {
-    var items = [];
-    for(var i = 0 ; i < itemsNeeded; i++) {
-        items.push({
-          value: i
-        });
-    }
-    return items;
-  }.bind(this)).then(this.addContent.bind(this));
-}
-
-VirtualListContainerController.prototype.addContent = function(items) {
-  for (var i = 0; i < items.length; i++) {
-    if (this.items_.length <= this.loadedItems_)
-      this.addItem_();
-    this.items_[this.loadedItems_++].data = items[i];
-  }
-  this.attachContent();
-}
-
-VirtualListContainerController.prototype.render = function(data, div) {
-
-  var scope = this.$rootScope.$new(true);
-  var model = { value: "Yes" };
-  angular.extend(scope, model);
-  var template = "<h1>val: {{value}}</h1>";
-  var compiled = this.$compile(template)(scope);
-  scope.$apply();
-  return compiled[0];
-}
-
-VirtualListContainerController.prototype.getTombstone = function() {
-  var tombstone = this.tombstones_.pop();
-  if (tombstone) {
-    tombstone.classList.remove('invisible');
-    tombstone.style.opacity = 1;
-    tombstone.style.transform = '';
-    tombstone.style.transition = '';
-
-    tombstone;
-  }
-  return this.tombstone.cloneNode(true);
-}
-
-VirtualListContainerController.prototype.addItem_ = function() {
-  this.items_.push({
+VirtualListContainerController.prototype.addItem = function() {
+  this.items.push({
     'data': null,
     'node': null,
     'height': 0,
     'width': 0,
     'top': 0,
-  })
+  });
+
+  console.log("add empty item", this.items.length - 1)
+}
+
+VirtualListContainerController.prototype.redraw = function() {
+  this.$$rAF(function() {
+    var evt = document.createEvent('UIEvents');
+    evt.initUIEvent('resize', true, false, window, 0);
+    window.dispatchEvent(evt);
+  }.bind(this));
+}
+
+VirtualListContainerController.prototype.getTombstone = function() {
+  var tombstone = this.tombstones.pop();
+  if (!tombstone) return this.tombstone.cloneNode(true);
+
+  tombstone.classList.remove('invisible');
+  tombstone.style.opacity = 1;
+  tombstone.style.transform = '';
+  tombstone.style.transition = '';
+  return tombstone;
+}
+
+VirtualListContainerController.prototype.render = function(data, index) {
+  // var div = this.unused.pop();
+  // if (div) {
+  //   console.log("recycle")
+  // }
+
+  var scope = this.$rootScope.$new(true);
+
+  scope.$index = index;
+  scope[this.repeatName] = data;
+
+  var compiled = this.$compile(this.templateStr)(scope);
+  scope.$apply();
+  return compiled[0];
+}
+
+VirtualListContainerController.prototype.maybeRequestContent = function() {
+  if (this.requestInProgress) return;
+  
+  var itemsNeeded = this.lastAttachedItem - this.loadedItems;
+  if (itemsNeeded <= 0) return;
+  
+  this.requestInProgress = true;
+  
+  var repeatList = this.rawRepeatListExpression(this.$scope);
+  var promises = [];
+
+  for(var i = this.loadedItems ; i < this.lastAttachedItem; i++) {
+
+    var promise = repeatList.getItemAtIndex2(i).then(function(res) {
+      if (this.items.length <= this.loadedItems)
+        this.addItem();
+      
+      this.loadedItems++;
+      this.items[res.index].data = res.data;
+    }.bind(this));
+
+    promises.push(promise);
+  }
+
+  return Promise.all(promises).then(function() {
+    this.attachContent();
+    this.requestInProgress = false;
+  }.bind(this));
 }
