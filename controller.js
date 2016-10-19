@@ -16,7 +16,20 @@ app.controller('Controller', ['$scope', function() {
     }, //getItemAtIndex
     getLength: function() {
       return this._items.length + 5;
+    },
+    /**/
+    getItemAtIndex2: function(index) {
+      return new Promise(function(resolve, reject) {
+        setTimeout(function() {
+          resolve({
+            index: index,
+            data: {
+              value: "INDEX " + index,
+              h: Math.random() * (200 - 50) + 50
+            } 
+          });
+        }.bind(this), Math.random() * 300);
+      });
     }
   }; 
-
 }]);
