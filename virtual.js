@@ -1,36 +1,49 @@
-var RUNWAyITEMS = 2;
-var RUNWAyITEMsOPPOSITE = 2;
+var RUNWAyITEMS = 10;
+var RUNWAyITEMsOPPOSITE = 5;
 var SCROLlRUNWAY = 200;
 var ANIMATIOnDURATIOnMS = 250;
 
 angular.module('App')
   .directive('mdVirtualListContainer', VirtualListContainerDirective);
 
-function VirtualListContainerDirective($parse, $compile, $rootScope, $window) {
+function VirtualListContainerDirective($parse, $rootScope) {
   return {
     restrict: 'AE',
-    transclude: 'element',
-    replace: true,
-    template: '<div class="virtual-list-container"></div>',
+    //transclude: 'element',
+    //replace: true,
+    //template: '<div></div>',
     controller: VirtualListContainerController,
     compile: function VirtualListContainerCompile($element, $attrs) {
-      $element.addClass("md-virtual-list-container");
+      var tombstone = $element[0].querySelector(".tombstone"); //store tombstone, but remove from template
+      if (!tombstone) throw new Error(".tombstone must be defined.");
+      $element[0].removeChild(tombstone);
 
+      var template = $element[0].querySelector(".template"); //store tombstone, but remove from template
+      if (!template) throw new Error(".template must be defined.");
+      $element[0].removeChild(template);
+
+      $element.addClass("md-virtual-list-container");
+      
       var expression = $attrs.mdVirtualListContainer;
       var match = expression.match(/^\s*([\s\S]+?)\s+in\s+([\s\S]+?)\s*$/);
       var repeatName = match[1];
       var repeatListExpression = $parse(match[2]);
 
-      return function Link($scope, $element, $attrs, ctrl, $transclude) {
-          ctrl.link($transclude, $compile, repeatName, repeatListExpression, $rootScope);
-      }    
+      return function PostLink($scope, $element, $attrs, ctrl) {
+        ctrl.link(repeatName, repeatListExpression, template, tombstone);
+        ctrl.redraw();
+      }
     }
   };
 }
 
-function VirtualListContainerController($scope, $element, $attrs, $document, $window, $$rAF, $mdUtil) {
-
+function VirtualListContainerController($scope, $element, $attrs, $compile, $rootScope, $document, $window, $$rAF, $mdUtil) {
   this.$scope = $scope;
+  this.$compile = $compile;
+  this.$rootScope = $rootScope;
+  this.$$rAF = $$rAF;
+  this.$mdUtil = $mdUtil;
+
   this.scroller = $element[0];
 
   this.anchorItem = { index: 0, offset: 0 };
@@ -45,7 +58,7 @@ function VirtualListContainerController($scope, $element, $attrs, $document, $wi
   this.requestInProgress = false;
 
   this.tombstone = null;
-  this.templateStr = null;
+  this.template = null;
 
   this.scrollRunway = $document[0].createElement('div');
   this.scrollRunway.textContent = ' ';
@@ -57,9 +70,6 @@ function VirtualListContainerController($scope, $element, $attrs, $document, $wi
 
   this.scroller.appendChild(this.scrollRunway);
 
-  this.$$rAF = $$rAF;
-  this.$mdUtil = $mdUtil;
-
   var jWindow = angular.element($window);
   var jScroller = angular.element(this.scroller);
 
@@ -69,48 +79,34 @@ function VirtualListContainerController($scope, $element, $attrs, $document, $wi
 
   var debouncedOnResize = $mdUtil.debounce(boundOnResize, 10, null, false);
   var debouncedOnScroll = $mdUtil.debounce(boundOnScroll, 10, null, false);
+  var debouncedOnKeyDown = $mdUtil.debounce(boundOnKeyDown, 10, null, false);
 
   jWindow.on('resize', debouncedOnResize);
-  jWindow.on('keydown', boundOnKeyDown);
+  jWindow.on('keydown', debouncedOnKeyDown);
   jScroller.on('scroll', debouncedOnScroll);
 
   $scope.$on('$destroy', function() {
     jWindow.off('resize', debouncedOnResize);
-    jWindow.off('keydown', boundOnKeyDown);
+    jWindow.off('keydown', debouncedOnKeyDown);
     jScroller.off('scroll', debouncedOnScroll);
   });
 }
 
-VirtualListContainerController.prototype.link = function($transclude, $compile, repeatName, repeatListExpression, $rootScope) {
+VirtualListContainerController.prototype.link = function(repeatName, repeatListExpression, template, tombstone) {
   this.repeatName = repeatName;
   this.rawRepeatListExpression = repeatListExpression;
-  this.transclude = $transclude;
-  this.$compile = $compile;
-  this.$rootScope = $rootScope;
-
-  this.transclude(function(clone, scope) {
-    var element = clone[0];
-
-    this.tombstone = element.querySelector(".tombstone"); //store tombstone, but remove from template
-    if (!this.tombstone) throw new Error(".tombstone must be defined.");
-    
-    this.templateStr = element.querySelector(".template").outerHTML.trim(); //store tombstone, but remove from template
-    if (!this.templateStr) throw new Error(".template must be defined.");
-
-    this.$mdUtil.nextTick(function() {
-      this.onResize();
-    }.bind(this));
-  }.bind(this));
+  this.template = template;
+  this.tombstone = tombstone;
 }
-
-// var elm = angular.element(el);
-// $compile(elm)($scope);
-// document.body.appendChild(elm[0]);
-// $scope.$digest();
 
 VirtualListContainerController.prototype.onResize = function() {
 
-    this.scroller.style.height = window.innerHeight - 40 + "px";
+    if(!this.scroller.offsetHeight) {
+      setTimeout(function() {
+        this.onResize();
+      }.bind(this), 10);
+      return;
+    }
 
     var tombstone = this.tombstone.cloneNode(true);
     tombstone.style.position = 'absolute';
@@ -127,23 +123,19 @@ VirtualListContainerController.prototype.onResize = function() {
 }
 
 VirtualListContainerController.prototype.onKeyDown = function(event) {
-  if (event.keyCode == 16 || event.keyCode == 17) { 
-
-      var offset = this.scroller.offsetHeight * 0.75;
-      if (event.keyCode == 17 ) offset * -1;
-
-      this.scroller.scrollTop = this.scroller.scrollTop + offset;
-
-      this.onScroll();
+  if (event.keyCode == 38 || event.keyCode == 40 || event.keyCode == 33 || event.keyCode == 34) { 
       event.preventDefault();
       event.stopPropagation();
+      var coef = event.keyCode > 34 ? 0.90 : 0.10;
+      offset = this.scroller.offsetHeight * coef; 
+      if (event.keyCode == 33 || event.keyCode == 38) offset = offset * -1;
+      this.scroller.scrollTop = this.scroller.scrollTop + offset;
+      this.onScroll();
     }
 }
 
 VirtualListContainerController.prototype.onScroll = function() {
     var delta = this.scroller.scrollTop - this.anchorScrollTop;
-
-    //console.log("delta", delta, this.scroller.scrollTop, this.anchorScrollTop)
 
     if (this.scroller.scrollTop == 0) {
       this.anchorItem = { index: 0, offset: 0 };
@@ -167,13 +159,7 @@ VirtualListContainerController.prototype.fill = function(start, end) {
 }
 
 VirtualListContainerController.prototype.attachContent = function() {
-    // Collect nodes which will no longer be rendered for reuse.
-    // TODO: Limit this based on the change in visible items rather than looping
-    // over all items.
-    console.log("----------", this.scroller.children.length)
-    console.log("items.length", this.items.length, "firstAttachedItem", this.firstAttachedItem, "lastAttachedItem", this.lastAttachedItem)
-    
-    var i;
+       var i;
     for (i = 0; i < this.items.length; i++) {
       //Skip the items which should be visible.
       if (i == this.firstAttachedItem) {
@@ -186,13 +172,10 @@ VirtualListContainerController.prototype.attachContent = function() {
           this.tombstones[this.tombstones.length - 1].classList.add('invisible');
         } else {
           this.unused.push(this.items[i].node);
-          //this.scroller.removeChild(this.items[i].node);
         }
       }
       this.items[i].node = null;
     }
-
-    //if (this.unused.length) console.log("unused", this.unused.length);
 
     var tombstoneAnimations = {};
     // Create DOM nodes.
@@ -225,8 +208,6 @@ VirtualListContainerController.prototype.attachContent = function() {
       this.items[i].top = -1;
       this.scroller.appendChild(node);
       this.items[i].node = node;
-      console.log("append node", i)
-      
     }
     
     // Remove all unused nodes
@@ -296,8 +277,6 @@ VirtualListContainerController.prototype.attachContent = function() {
     this.scrollRunway.style.transform = 'translate(0, ' + this.scrollRunwayEnd + 'px)';
     this.scroller.scrollTop = this.anchorScrollTop;
 
-    console.log("this.scrollRunwayEnd", this.scrollRunwayEnd);
-
     if (ANIMATIOnDURATIOnMS) {
       // TODO: Should probably use transition end, but there are a lot of animations we could be listening to.
       setTimeout(function() {
@@ -353,8 +332,6 @@ VirtualListContainerController.prototype.addItem = function() {
     'width': 0,
     'top': 0,
   });
-
-  console.log("add empty item", this.items.length - 1)
 }
 
 VirtualListContainerController.prototype.redraw = function() {
@@ -387,7 +364,8 @@ VirtualListContainerController.prototype.render = function(data, index) {
   scope.$index = index;
   scope[this.repeatName] = data;
 
-  var compiled = this.$compile(this.templateStr)(scope);
+  var template = this.template.cloneNode(true);
+  var compiled = this.$compile(template)(scope);
   scope.$apply();
   return compiled[0];
 }
@@ -395,28 +373,21 @@ VirtualListContainerController.prototype.render = function(data, index) {
 VirtualListContainerController.prototype.maybeRequestContent = function() {
   if (this.requestInProgress) return;
   
-  var itemsNeeded = this.lastAttachedItem - this.loadedItems;
-  if (itemsNeeded <= 0) return;
+  var take = this.lastAttachedItem - this.loadedItems;
+  if (take <= 0) return;
   
   this.requestInProgress = true;
   
   var repeatList = this.rawRepeatListExpression(this.$scope);
   var promises = [];
 
-  for(var i = this.loadedItems ; i < this.lastAttachedItem; i++) {
-
-    var promise = repeatList.getItemAtIndex2(i).then(function(res) {
-      if (this.items.length <= this.loadedItems)
+  repeatList.fetch(this.loadedItems, take).then(function(res) {
+    res.map(function(item) {
+      while (this.items.length <= this.loadedItems)
         this.addItem();
-      
-      this.loadedItems++;
-      this.items[res.index].data = res.data;
+
+      this.items[this.loadedItems++].data = item;
     }.bind(this));
-
-    promises.push(promise);
-  }
-
-  return Promise.all(promises).then(function() {
     this.attachContent();
     this.requestInProgress = false;
   }.bind(this));
