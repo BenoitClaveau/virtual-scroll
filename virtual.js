@@ -1,7 +1,7 @@
 var RUNWAyITEMS = 10;
 var RUNWAyITEMsOPPOSITE = 5;
 var SCROLlRUNWAY = 200;
-var ANIMATIOnDURATIOnMS = 250;
+var ANIMATIOnDURATIOnMS = 1000;
 
 angular.module('App')
   .directive('mdVirtualListContainer', VirtualListContainerDirective);
@@ -14,11 +14,17 @@ function VirtualListContainerDirective($parse, $rootScope) {
     //template: '<div></div>',
     controller: VirtualListContainerController,
     compile: function VirtualListContainerCompile($element, $attrs) {
-      var tombstone = $element[0].querySelector(".tombstone"); //store tombstone, but remove from template
+
+      var pullRequest = $element[0].querySelector(".pull-request");
+      if (!pullRequest) throw new Error(".pull-request must be defined.");
+      $element[0].removeChild(pullRequest);
+      
+      var tombstone = $element[0].querySelector(".tombstone");
       if (!tombstone) throw new Error(".tombstone must be defined.");
       $element[0].removeChild(tombstone);
+      tombstone.classList.add('invisible');
 
-      var template = $element[0].querySelector(".template"); //store tombstone, but remove from template
+      var template = $element[0].querySelector(".template");
       if (!template) throw new Error(".template must be defined.");
       $element[0].removeChild(template);
 
@@ -30,7 +36,7 @@ function VirtualListContainerDirective($parse, $rootScope) {
       var repeatListExpression = $parse(match[2]);
 
       return function PostLink($scope, $element, $attrs, ctrl) {
-        ctrl.link(repeatName, repeatListExpression, template, tombstone);
+        ctrl.link(repeatName, repeatListExpression, template, tombstone, pullRequest);
         ctrl.redraw();
       }
     }
@@ -57,8 +63,13 @@ function VirtualListContainerController($scope, $element, $attrs, $compile, $roo
   this.loadedItems = 0;
   this.requestInProgress = false;
 
+  this.pullRequestSize = 0;
+  this.$scope.pullRefreshActivated = false;
+  this.pullRequestTouchOrigin = -1;
+
   this.tombstone = null;
   this.template = null;
+  this.pullRequest = null;
 
   this.scrollRunway = $document[0].createElement('div');
   this.scrollRunway.textContent = ' ';
@@ -77,26 +88,56 @@ function VirtualListContainerController($scope, $element, $attrs, $compile, $roo
   var boundOnResize = this.onResize.bind(this);
   var boundOnKeyDown = this.onKeyDown.bind(this);
 
-  var debouncedOnResize = $mdUtil.debounce(boundOnResize, 10, null, false);
-  var debouncedOnScroll = $mdUtil.debounce(boundOnScroll, 10, null, false);
-  var debouncedOnKeyDown = $mdUtil.debounce(boundOnKeyDown, 10, null, false);
+  var boundOnTouchStart = this.onTouchStart.bind(this);
+  var boundOnTouchMove = this.onTouchMove.bind(this);
+  var boundOnTouchEnd = this.onTouchEnd.bind(this);
+  var boundOnTouchLeave = this.onTouchLeave.bind(this);
+
+  var debouncedOnResize = $mdUtil.debounce(boundOnResize, 5, null, false);
+  var debouncedOnScroll = $mdUtil.debounce(boundOnScroll, 5, null, false);
+  var debouncedOnKeyDown = $mdUtil.debounce(boundOnKeyDown, 5, null, false);
+
+  var debouncedOnTouchMove = $mdUtil.debounce(boundOnTouchMove, 5, null, false);
+  
+  // this.$scope.$on("item", function(e, d) {
+  //   if (d.index == 0) console.log("refresh done", d)
+  // }.bind(this));
 
   jWindow.on('resize', debouncedOnResize);
   jWindow.on('keydown', debouncedOnKeyDown);
   jScroller.on('scroll', debouncedOnScroll);
+  jWindow.on('touchstart', boundOnTouchStart);
+
+  jWindow.on('touchmove', debouncedOnTouchMove);
+  jWindow.on('touchend', boundOnTouchEnd);
+  jWindow.on('touchleave', boundOnTouchLeave);
 
   $scope.$on('$destroy', function() {
     jWindow.off('resize', debouncedOnResize);
     jWindow.off('keydown', debouncedOnKeyDown);
     jScroller.off('scroll', debouncedOnScroll);
+    jWindow.off('touchstart', boundOnTouchStart);
+    jWindow.off('touchmove', debouncedOnTouchMove);
+    jWindow.off('touchend', boundOnTouchEnd);
+    jWindow.off('touchleave', boundOnTouchLeave);
   });
 }
 
-VirtualListContainerController.prototype.link = function(repeatName, repeatListExpression, template, tombstone) {
+VirtualListContainerController.prototype.link = function(repeatName, repeatListExpression, template, tombstone, pullRequest) {
   this.repeatName = repeatName;
   this.rawRepeatListExpression = repeatListExpression;
   this.template = template;
   this.tombstone = tombstone;
+
+  //var template = this.template.cloneNode(true);
+  var compiled = this.$compile(pullRequest)(this.$scope);
+  //this.$scope.$apply();
+
+  this.pullRequest = compiled[0];
+  this.pullRequest.style.position = 'absolute';
+  this.pullRequest.style.transition = 'transform 0.2s';
+  this.pullRequest.style.transform = 'translateY(-100px)' //default value
+  this.scroller.appendChild(this.pullRequest);
 }
 
 VirtualListContainerController.prototype.onResize = function() {
@@ -108,6 +149,9 @@ VirtualListContainerController.prototype.onResize = function() {
       return;
     }
 
+    this.pullRequestSize = this.pullRequest.offsetHeight;
+    this.pullRequest.style.transform = 'translateY(' + (-this.pullRequestSize) + 'px)';
+    
     var tombstone = this.tombstone.cloneNode(true);
     tombstone.style.position = 'absolute';
     this.scroller.appendChild(tombstone);
@@ -134,7 +178,88 @@ VirtualListContainerController.prototype.onKeyDown = function(event) {
     }
 }
 
+VirtualListContainerController.prototype.onTouchStart = function(event) {
+  var rect = this.scroller.getBoundingClientRect();
+  var pan = event.changedTouches[0].clientY - rect.top;
+
+  if (pan < 40) {
+    event.preventDefault();
+    event.stopPropagation();
+    this.pullRequest.style.transition = 'none';
+    this.pullRequestTouchOrigin = event.changedTouches[0].clientY;
+  }
+  else {
+    this.pullRequestTouchOrigin = -1;
+  }
+}
+
+VirtualListContainerController.prototype.onTouchMove = function(event) {  
+  if (this.pullRequestTouchOrigin == -1) return;
+  var offset = event.changedTouches[0].clientY - this.pullRequestTouchOrigin;
+  
+  if (offset > 0) {
+    this.pullRequest.style.transform = 'translateY(' + this.scroller.scrollTop + 'px)';
+    this.pullRequest.style.height =  offset + this.pullRequestSize + 'px';
+  }
+  else
+    this.pullRequest.style.transform = 'translateY(' + this.scroller.scrollTop + (offset - this.pullRequestSize) + 'px)';
+
+  this.$scope.$apply(function() {
+    this.$scope.pullRefreshActivated = offset > this.pullRequestSize;
+  }.bind(this));
+  
+
+  return false
+}
+
+VirtualListContainerController.prototype.onTouchEnd = function() {
+  if (this.pullRequestTouchOrigin == -1) return;
+
+  this.pullRequestTouchOrigin = -1;
+  this.pullRequest.style.transition = 'transform' + ANIMATIOnDURATIOnMS + 'ms';
+  if (this.$scope.pullRefreshActivated) {
+    this.$scope.pullRefreshActivated = false;
+    this.pullRequest.style.transform = 'translateY(' + (-this.pullRequestSize) + 'px)';
+    this.pullRequest.style.height = this.pullRequestSize + 'px';
+    this.refresh();
+  }
+  else {
+    this.$scope.pullRefreshActivated = false;
+    this.pullRequest.style.transform = 'translateY(' + (-this.pullRequestSize) + 'px)';
+    this.pullRequest.style.height = this.pullRequestSize + 'px';
+  }
+}
+
+VirtualListContainerController.prototype.onTouchLeave = function() {
+  if (this.pullRequestTouchOrigin == -1) return;
+
+  this.pullRequestTouchOrigin = -1;
+  this.$scope.pullRefreshActivated = false;
+  this.pullRequest.style.transition = 'transform' + ANIMATIOnDURATIOnMS + 'ms';
+  this.pullRequest.style.transform = 'translateY(' + (-this.pullRequestSize) + 'px)';
+  this.pullRequest.style.height = this.pullRequestSize + 'px';
+}
+
+VirtualListContainerController.prototype.refresh = function() {
+
+  while (this.items.length) {
+    var item = this.items.pop();
+    if (item.node) this.unused.push(item.node);
+  }
+
+  this.anchorItem = { index: 0, offset: 0 };
+  this.firstAttachedItem = 0;
+  this.lastAttachedItem = 0;
+  this.anchorScrollTop = 0;
+  this.loadedItems = 0;
+  this.scroller.scrollTop = 0;
+
+  this.onScroll();  
+}
+
 VirtualListContainerController.prototype.onScroll = function() {
+    if (this.pullRequestTouchOrigin !== -1) return true; 
+    
     var delta = this.scroller.scrollTop - this.anchorScrollTop;
 
     if (this.scroller.scrollTop == 0) {
@@ -159,7 +284,7 @@ VirtualListContainerController.prototype.fill = function(start, end) {
 }
 
 VirtualListContainerController.prototype.attachContent = function() {
-       var i;
+    var i;
     for (i = 0; i < this.items.length; i++) {
       //Skip the items which should be visible.
       if (i == this.firstAttachedItem) {
@@ -252,6 +377,7 @@ VirtualListContainerController.prototype.attachContent = function() {
     for (var i in tombstoneAnimations) {
       var anim = tombstoneAnimations[i];
       this.items[i].node.style.transform = 'translateY(' + (this.anchorScrollTop + anim[1]) + 'px) scale(' + (this.tombstoneWidth_ / this.items[i].width) + ', ' + (this.tombstoneSize / this.items[i].height) + ')';
+      
       // Call offsetTop on the nodes to be animated to force them to apply current transforms.
       this.items[i].node.offsetTop;
       anim[0].offsetTop;
@@ -265,8 +391,7 @@ VirtualListContainerController.prototype.attachContent = function() {
         anim[0].style.opacity = 0;
       }
       if (curPos != this.items[i].top) {
-        if (!anim)
-          this.items[i].node.style.transition = '';
+        if (!anim) this.items[i].node.style.transition = '';
         this.items[i].node.style.transform = 'translateY(' + curPos + 'px)';
       }
       this.items[i].top = curPos;
@@ -367,6 +492,9 @@ VirtualListContainerController.prototype.render = function(data, index) {
   var template = this.template.cloneNode(true);
   var compiled = this.$compile(template)(scope);
   scope.$apply();
+
+  //console.log("render index", index, data, compiled[0])
+  //this.$scope.$emit("item", {index: index, data: data});
   return compiled[0];
 }
 
@@ -379,16 +507,14 @@ VirtualListContainerController.prototype.maybeRequestContent = function() {
   this.requestInProgress = true;
   
   var repeatList = this.rawRepeatListExpression(this.$scope);
-  var promises = [];
 
   repeatList.fetch(this.loadedItems, take).then(function(res) {
     res.map(function(item) {
       while (this.items.length <= this.loadedItems)
         this.addItem();
-
       this.items[this.loadedItems++].data = item;
     }.bind(this));
-    this.attachContent();
     this.requestInProgress = false;
+    this.attachContent();
   }.bind(this));
 }
