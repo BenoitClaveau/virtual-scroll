@@ -4,7 +4,7 @@ var SCROLlRUNWAY = 200;
 var ANIMATIOnDURATIOnMS = 1000;
 
 angular.module('App')
-  .directive('mdVirtualListContainer', VirtualListContainerDirective);
+  .directive('mdVirtualListContainer', ["$parse", "$rootScope", VirtualListContainerDirective]);
 
 function VirtualListContainerDirective($parse, $rootScope) {
   return {
@@ -12,7 +12,7 @@ function VirtualListContainerDirective($parse, $rootScope) {
     //transclude: 'element',
     //replace: true,
     //template: '<div></div>',
-    controller: VirtualListContainerController,
+    controller: ["$scope", "$element", "$attrs", "$compile", "$rootScope", "$document", "$window", "$$rAF", "$mdUtil", VirtualListContainerController],
     compile: function VirtualListContainerCompile($element, $attrs) {
 
       var pullRequest = $element[0].querySelector(".pull-request");
@@ -41,7 +41,7 @@ function VirtualListContainerDirective($parse, $rootScope) {
       }
     }
   };
-}
+};
 
 function VirtualListContainerController($scope, $element, $attrs, $compile, $rootScope, $document, $window, $$rAF, $mdUtil) {
   this.$scope = $scope;
