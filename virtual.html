@@ -42,6 +42,15 @@ body {
   display: none;
 }
 
+.pull-request {
+  background-color: #FFF;
+  z-index: 1;
+}
+
+.template {
+  background-color: #FFF;
+}
+
   </style>
 </head>
 
@@ -51,9 +60,9 @@ body {
 
   <main>
     <div md-virtual-list-container="i in ctrl.dataset">
-      <!--<div class="loading">
-        <p>LOADING</p>
-      </div>-->
+      <div class="pull-request">
+        <p>Pull down to refresh {{pullRefreshActivated}}</p>
+      </div>
       <div class="tombstone">
         <p>Loading....</p>
       </div>
