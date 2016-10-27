@@ -71,6 +71,8 @@ function VirtualListContainerController($scope, $element, $attrs, $compile, $roo
   this.template = null;
   this.pullRequest = null;
 
+  this.fetchCompleted = false;
+
   this.scrollRunway = $document[0].createElement('div');
   this.scrollRunway.textContent = ' ';
   this.scrollRunwayEnd = 0;
@@ -99,10 +101,6 @@ function VirtualListContainerController($scope, $element, $attrs, $compile, $roo
 
   var debouncedOnTouchMove = $mdUtil.debounce(boundOnTouchMove, 5, null, false);
   
-  // this.$scope.$on("item", function(e, d) {
-  //   if (d.index == 0) console.log("refresh done", d)
-  // }.bind(this));
-
   jWindow.on('resize', debouncedOnResize);
   jWindow.on('keydown', debouncedOnKeyDown);
   jScroller.on('scroll', debouncedOnScroll);
@@ -121,6 +119,14 @@ function VirtualListContainerController($scope, $element, $attrs, $compile, $roo
     jWindow.off('touchend', boundOnTouchEnd);
     jWindow.off('touchleave', boundOnTouchLeave);
   });
+
+  this.$scope.$on("fetch", function(e, d) {
+    if (d.index == 0) {
+      this.$scope.pullRefreshActivated = false;
+      this.pullRequest.style.transition = 'transform ' + ANIMATIOnDURATIOnMS + 'ms'; 
+      this.pullRequest.style.transform = 'translateY(' + (-this.pullRequestSize) + 'px)';
+    }
+  }.bind(this));
 }
 
 VirtualListContainerController.prototype.link = function(repeatName, repeatListExpression, template, tombstone, pullRequest) {
@@ -185,48 +191,49 @@ VirtualListContainerController.prototype.onTouchStart = function(event) {
   if (pan < 40) {
     event.preventDefault();
     event.stopPropagation();
-    this.pullRequest.style.transition = 'none';
+    this.pullRequest.style.transition = '';
     this.pullRequestTouchOrigin = event.changedTouches[0].clientY;
-  }
-  else {
-    this.pullRequestTouchOrigin = -1;
+    this.$scope.pullRefreshActivated = false;
+    this.pullRequest.style.transform = 'translateY(' + (this.scroller.scrollTop - this.pullRequestSize) + 'px)';
   }
 }
 
 VirtualListContainerController.prototype.onTouchMove = function(event) {  
   if (this.pullRequestTouchOrigin == -1) return;
+
   var offset = event.changedTouches[0].clientY - this.pullRequestTouchOrigin;
-  
-  if (offset > 0) {
-    this.pullRequest.style.transform = 'translateY(' + this.scroller.scrollTop + 'px)';
-    this.pullRequest.style.height =  offset + this.pullRequestSize + 'px';
-  }
-  else
-    this.pullRequest.style.transform = 'translateY(' + this.scroller.scrollTop + (offset - this.pullRequestSize) + 'px)';
+  var height = Math.max(offset, this.pullRequestSize);
+  var y = Math.min(offset - this.pullRequestSize, 0)
+  this.pullRequest.style.transform = 'translateY(' + (this.scroller.scrollTop + y) + 'px)';
+  this.pullRequest.style.height =  height + 'px';
 
   this.$scope.$apply(function() {
-    this.$scope.pullRefreshActivated = offset > this.pullRequestSize;
+    this.$scope.pullRefreshActivated = y == 0;
   }.bind(this));
   
-
   return false
 }
 
-VirtualListContainerController.prototype.onTouchEnd = function() {
+VirtualListContainerController.prototype.onTouchEnd = function(event) {
   if (this.pullRequestTouchOrigin == -1) return;
 
   this.pullRequestTouchOrigin = -1;
-  this.pullRequest.style.transition = 'transform' + ANIMATIOnDURATIOnMS + 'ms';
+  
   if (this.$scope.pullRefreshActivated) {
-    this.$scope.pullRefreshActivated = false;
-    this.pullRequest.style.transform = 'translateY(' + (-this.pullRequestSize) + 'px)';
-    this.pullRequest.style.height = this.pullRequestSize + 'px';
-    this.refresh();
+      this.pullRequest.style.transition = '';
+      this.pullRequest.style.transform = 'translateY(0px)';
+      this.clear(); //scroll top has changed to 0
+      
+      this.$mdUtil.nextTick(function() {
+        this.pullRequest.style.transition = 'transform ' + ANIMATIOnDURATIOnMS + 'ms, height ' + ANIMATIOnDURATIOnMS + 'ms'; 
+        this.pullRequest.style.height = this.pullRequestSize + 'px';
+        this.onScroll();
+      }.bind(this));
   }
   else {
-    this.$scope.pullRefreshActivated = false;
-    this.pullRequest.style.transform = 'translateY(' + (-this.pullRequestSize) + 'px)';
+    this.pullRequest.style.transition = 'transform ' + ANIMATIOnDURATIOnMS + 'ms, height ' + ANIMATIOnDURATIOnMS + 'ms'; 
     this.pullRequest.style.height = this.pullRequestSize + 'px';
+    this.pullRequest.style.transform = 'translateY(' + (-this.pullRequestSize) + 'px)';
   }
 }
 
@@ -234,32 +241,30 @@ VirtualListContainerController.prototype.onTouchLeave = function() {
   if (this.pullRequestTouchOrigin == -1) return;
 
   this.pullRequestTouchOrigin = -1;
-  this.$scope.pullRefreshActivated = false;
-  this.pullRequest.style.transition = 'transform' + ANIMATIOnDURATIOnMS + 'ms';
+  this.pullRequest.style.transition = 'transform ' + ANIMATIOnDURATIOnMS + 'ms, height ' + ANIMATIOnDURATIOnMS + 'ms'; 
   this.pullRequest.style.transform = 'translateY(' + (-this.pullRequestSize) + 'px)';
   this.pullRequest.style.height = this.pullRequestSize + 'px';
 }
 
-VirtualListContainerController.prototype.refresh = function() {
+VirtualListContainerController.prototype.clear = function() {
 
   while (this.items.length) {
     var item = this.items.pop();
     if (item.node) this.unused.push(item.node);
   }
 
+  this.tombstones.splice(0, this.tombstones.length)
   this.anchorItem = { index: 0, offset: 0 };
   this.firstAttachedItem = 0;
   this.lastAttachedItem = 0;
   this.anchorScrollTop = 0;
   this.loadedItems = 0;
   this.scroller.scrollTop = 0;
-
-  this.onScroll();  
+  this.fetchCompleted = false;
+  this.requestInProgress = false;
 }
 
 VirtualListContainerController.prototype.onScroll = function() {
-    if (this.pullRequestTouchOrigin !== -1) return true; 
-    
     var delta = this.scroller.scrollTop - this.anchorScrollTop;
 
     if (this.scroller.scrollTop == 0) {
@@ -278,6 +283,12 @@ VirtualListContainerController.prototype.onScroll = function() {
 }
 
 VirtualListContainerController.prototype.fill = function(start, end) {
+
+  if (this.fetchCompleted) {
+    start = Math.min(start, this.loadedItems); 
+    end = Math.min(end, this.loadedItems);
+  }
+
   this.firstAttachedItem = Math.max(start, 0);
   this.lastAttachedItem = end;
   this.attachContent();
@@ -329,6 +340,7 @@ VirtualListContainerController.prototype.attachContent = function() {
       }
 
       var node = this.items[i].data ? this.render(this.items[i].data, i) : this.getTombstone();
+      
       node.style.position = 'absolute';
       this.items[i].top = -1;
       this.scroller.appendChild(node);
@@ -398,7 +410,15 @@ VirtualListContainerController.prototype.attachContent = function() {
       curPos += this.items[i].height || this.tombstoneSize;
     }
 
-    this.scrollRunwayEnd = Math.max(this.scrollRunwayEnd, curPos + SCROLlRUNWAY)
+    // if (res.length < take) {
+    //   var last = this.items[this.loadedItems - 1];
+    //   var bottom = last.top + last.height;
+    //   this.scrollRunwayEnd = Math.max(bottom);
+    //   this.scrollRunway.style.transform = 'translate(0, ' + this.scrollRunwayEnd + 'px)';
+    // }
+
+    //this.scrollRunwayEnd = Math.max(this.scrollRunwayEnd, curPos + SCROLlRUNWAY)
+    this.scrollRunwayEnd = this.fetchCompleted ? curPos : Math.max(this.scrollRunwayEnd, curPos + SCROLlRUNWAY);
     this.scrollRunway.style.transform = 'translate(0, ' + this.scrollRunwayEnd + 'px)';
     this.scroller.scrollTop = this.anchorScrollTop;
 
@@ -491,17 +511,17 @@ VirtualListContainerController.prototype.render = function(data, index) {
 
   var template = this.template.cloneNode(true);
   var compiled = this.$compile(template)(scope);
-  scope.$apply();
-
-  //console.log("render index", index, data, compiled[0])
-  //this.$scope.$emit("item", {index: index, data: data});
+  this.$rootScope.$$phase = null;
+  scope.$digest();
   return compiled[0];
 }
 
 VirtualListContainerController.prototype.maybeRequestContent = function() {
   if (this.requestInProgress) return;
+  if (this.fetchCompleted) return;
   
   var take = this.lastAttachedItem - this.loadedItems;
+  take = Math.min(take, 5);
   if (take <= 0) return;
   
   this.requestInProgress = true;
@@ -513,8 +533,11 @@ VirtualListContainerController.prototype.maybeRequestContent = function() {
       while (this.items.length <= this.loadedItems)
         this.addItem();
       this.items[this.loadedItems++].data = item;
+      this.$scope.$emit("fetch", {index: this.loadedItems - 1, data: item});
     }.bind(this));
+    this.fetchCompleted = res.length < take;
     this.requestInProgress = false;
     this.attachContent();
+
   }.bind(this));
 }
